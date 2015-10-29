@@ -1,5 +1,7 @@
 ﻿using System;
 using System.Diagnostics;
+using System.Linq;
+using System.Net;
 using System.Threading.Tasks;
 using StackExchange.Redis;
 
@@ -11,11 +13,11 @@ namespace Microsoft.AspNet.SignalR.Redis
         private ConnectionMultiplexer _connection;
         private TraceSource _trace;
         private ulong _latestMessageId;
+        private ConfigurationOptions _options;
 
         public async Task ConnectAsync(string connectionString, TraceSource trace)
         {
-            _connection = await ConnectionMultiplexer.ConnectAsync(connectionString);
-
+            _connection = await ConnectToRedis(connectionString);
             _connection.ConnectionFailed += OnConnectionFailed;
             _connection.ConnectionRestored += OnConnectionRestored;
             _connection.ErrorMessage += OnError;
@@ -72,9 +74,7 @@ namespace Microsoft.AspNet.SignalR.Redis
 
             var arguments = new RedisValue[] { messageArguments };
 
-            return _connection.GetDatabase(database).ScriptEvaluateAsync(script,
-                keys,
-                arguments);
+          return _connection.GetDatabase(database).ScriptEvaluateAsync(script, keys, arguments);
         }
 
         public async Task RestoreLatestValueForKey(int database, string key)
@@ -130,6 +130,67 @@ namespace Microsoft.AspNet.SignalR.Redis
         {
             var handler = ErrorMessage;
             handler(new InvalidOperationException(args.Message));
+        }
+        private async Task<ConnectionMultiplexer> ConnectToRedis(string connectionString)
+        {
+          _options = ConfigurationOptions.Parse(connectionString);
+          if (!string.IsNullOrEmpty(_options.ServiceName))
+          {
+            ModifyEndpointsForSentinelConfiguration(_options);
+          }
+          return await ConnectionMultiplexer.ConnectAsync(_options);
+        }
+
+      private void ModifyEndpointsForSentinelConfiguration(ConfigurationOptions options)
+      {
+          var sentinelConfiguration = new ConfigurationOptions
+          {
+            CommandMap = CommandMap.Sentinel,
+            TieBreaker = "",
+            ServiceName = options.ServiceName,
+            SyncTimeout = options.SyncTimeout
+          };
+
+          EndPoint masterEndPoint = null;
+
+          foreach (var endpoint in options.EndPoints)
+          {
+            sentinelConfiguration.EndPoints.Add(endpoint);
+            var sentinelConnection = ConnectionMultiplexer.Connect(sentinelConfiguration);
+            var subscriber = sentinelConnection.GetSubscriber();
+            subscriber.Subscribe("+switch-master", MasterWasSwitched);
+            masterEndPoint = sentinelConnection.GetServer(endpoint).SentinelGetMasterAddressByName(sentinelConfiguration.ServiceName);
+
+            if (masterEndPoint != null)
+            {
+              break;
+            }
+          }
+
+          options.EndPoints.Clear();
+          options.EndPoints.Add(masterEndPoint);
+        }
+
+        private void MasterWasSwitched(RedisChannel redisChannel, RedisValue redisValue)
+        {
+          _connection.Close();
+          if (redisValue.IsNullOrEmpty) return;
+          var message = redisValue.ToString();
+          var messageParts = message.Split(' ');
+          var ip = IPAddress.Parse(messageParts[3]);
+          var port = int.Parse(messageParts[4]);
+          EndPoint newMasterEndpoint = new IPEndPoint(ip, port);
+          if (_options.EndPoints.Any() && newMasterEndpoint == _options.EndPoints[0]) return;
+          _options.EndPoints.Clear();
+          _options.EndPoints.Add(newMasterEndpoint);
+
+          _connection = ConnectionMultiplexer.Connect(_options);
+          _connection.ConnectionFailed += OnConnectionFailed;
+          _connection.ConnectionRestored += OnConnectionRestored;
+          _connection.ErrorMessage += OnError;
+          _redisSubscriber = _connection.GetSubscriber();
+          var handler = ConnectionRestored;
+          if (handler != null) handler(new ApplicationException("Redis master was switched"));
         }
     }
 }
