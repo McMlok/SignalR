@@ -139,12 +139,12 @@ namespace Microsoft.AspNet.SignalR.Redis
 
         private async void OnConnectionRestored(Exception ex)
         {
-            if (ex.Message == "Redis master was switched")
-            {
-              //Master is now diferent server we must resubscribe to get messages published to new server
-              await _connection.SubscribeAsync(_key, OnMessage);
-            }
-            await _connection.RestoreLatestValueForKey(_db, _key);
+						if (ex != null && ex.Message == "Redis master was switched")
+						{
+							//Master is now diferent server we must resubscribe to get messages published to new server
+							await _connection.SubscribeAsync(_key, OnMessage);
+						}
+						await _connection.RestoreLatestValueForKey(_db, _key);
             _trace.TraceInformation("Connection restored");
 
             Interlocked.Exchange(ref _state, State.Connected);

@@ -14,8 +14,10 @@ namespace Microsoft.AspNet.SignalR.Redis
         private TraceSource _trace;
         private ulong _latestMessageId;
         private ConfigurationOptions _options;
+        private ConfigurationOptions _sentinelConfiguration;
+        private ConnectionMultiplexer _sentinelConnection;
 
-        public async Task ConnectAsync(string connectionString, TraceSource trace)
+				public async Task ConnectAsync(string connectionString, TraceSource trace)
         {
             _connection = await ConnectToRedis(connectionString);
             _connection.ConnectionFailed += OnConnectionFailed;
@@ -136,43 +138,69 @@ namespace Microsoft.AspNet.SignalR.Redis
           _options = ConfigurationOptions.Parse(connectionString);
           if (!string.IsNullOrEmpty(_options.ServiceName))
           {
+            _sentinelConfiguration = CreateSentinellConfiguration(_options);
             ModifyEndpointsForSentinelConfiguration(_options);
           }
           return await ConnectionMultiplexer.ConnectAsync(_options);
         }
 
-      private void ModifyEndpointsForSentinelConfiguration(ConfigurationOptions options)
-      {
-          var sentinelConfiguration = new ConfigurationOptions
-          {
-            CommandMap = CommandMap.Sentinel,
-            TieBreaker = "",
-            ServiceName = options.ServiceName,
-            SyncTimeout = options.SyncTimeout
-          };
-
-          EndPoint masterEndPoint = null;
-
-          foreach (var endpoint in options.EndPoints)
-          {
-            sentinelConfiguration.EndPoints.Add(endpoint);
-            var sentinelConnection = ConnectionMultiplexer.Connect(sentinelConfiguration);
-            var subscriber = sentinelConnection.GetSubscriber();
-            subscriber.Subscribe("+switch-master", MasterWasSwitched);
-            masterEndPoint = sentinelConnection.GetServer(endpoint).SentinelGetMasterAddressByName(sentinelConfiguration.ServiceName);
-
-            if (masterEndPoint != null)
-            {
-              break;
-            }
-          }
-
+        private void ModifyEndpointsForSentinelConfiguration(ConfigurationOptions options)
+        {
+          ConnectToSentinel();
+          EndPoint masterEndPoint = _sentinelConnection.GetServer(_sentinelConnection.GetEndPoints().First()).SentinelGetMasterAddressByName(_sentinelConfiguration.ServiceName);
           options.EndPoints.Clear();
           options.EndPoints.Add(masterEndPoint);
         }
 
-        private void MasterWasSwitched(RedisChannel redisChannel, RedisValue redisValue)
+        private ConfigurationOptions CreateSentinellConfiguration(ConfigurationOptions configOption)
         {
+          var sentinelConfiguration = new ConfigurationOptions
+          {
+            CommandMap = CommandMap.Sentinel,
+            TieBreaker = "",
+            ServiceName = configOption.ServiceName,
+            SyncTimeout = configOption.SyncTimeout,
+          };
+          foreach (var endPoint in configOption.EndPoints)
+          {
+            sentinelConfiguration.EndPoints.Add(endPoint);
+          }
+          return sentinelConfiguration;
+        }
+
+        private void ConnectToSentinel()
+        {
+          _sentinelConnection = ConnectionMultiplexer.Connect(_sentinelConfiguration);
+          var subscriber = _sentinelConnection.GetSubscriber();
+          subscriber.Subscribe("+switch-master", MasterWasSwitched);
+          _sentinelConnection.ConnectionFailed += SentinelConnectionFailed;
+					_sentinelConnection.ConnectionRestored += SentinelConnectionRestored;
+				}
+
+        private void SentinelConnectionFailed(object sender, ConnectionFailedEventArgs e)
+        {
+          _sentinelConnection.ConnectionFailed -= SentinelConnectionFailed;
+					_sentinelConnection.ConnectionRestored -= SentinelConnectionRestored;
+					_sentinelConnection.Close();
+          ConnectToSentinel();
+        }
+
+				private void SentinelConnectionRestored(object sender, ConnectionFailedEventArgs e)
+				{
+					// Workaround for StackExchange.Redis/issues/61 that sometimes Redis connection is not connected in ConnectionRestored event 
+					while (!_sentinelConnection.IsConnected)
+					{
+						Task.Delay(200).Wait();
+					}
+					var subscriber = _sentinelConnection.GetSubscriber();
+					subscriber.Subscribe("+switch-master", MasterWasSwitched);
+				}
+
+				private void MasterWasSwitched(RedisChannel redisChannel, RedisValue redisValue)
+        {
+	        _connection.ConnectionFailed -= OnConnectionFailed;
+	        _connection.ConnectionRestored -= OnConnectionRestored;
+	        _connection.ErrorMessage -= OnError;
           _connection.Close();
           if (redisValue.IsNullOrEmpty) return;
           var message = redisValue.ToString();
