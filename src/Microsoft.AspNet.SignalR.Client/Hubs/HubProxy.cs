@@ -1,11 +1,11 @@
-﻿// Copyright (c) Microsoft Open Technologies, Inc. All rights reserved. See License.md in the project root for license information.
+﻿// Copyright (c) .NET Foundation. All rights reserved.
+// Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.Globalization;
 using System.Threading.Tasks;
-using Microsoft.AspNet.SignalR.Client;
+using Microsoft.AspNet.SignalR.Infrastructure;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -97,10 +97,12 @@ namespace Microsoft.AspNet.SignalR.Client.Hubs
             var tokenifiedArguments = new JToken[args.Length];
             for (int i = 0; i < tokenifiedArguments.Length; i++)
             {
-                tokenifiedArguments[i] = JToken.FromObject(args[i], JsonSerializer);
+                tokenifiedArguments[i] = args[i] != null
+                    ? JToken.FromObject(args[i], JsonSerializer)
+                    : JValue.CreateNull();
             }
 
-            var tcs = new TaskCompletionSource<TResult>();
+            var tcs = new DispatchingTaskCompletionSource<TResult>();
             var callbackId = _connection.RegisterCallback(result =>
             {
                 if (result != null)

@@ -1,4 +1,5 @@
-﻿// Copyright (c) Microsoft Open Technologies, Inc. All rights reserved. See License.md in the project root for license information.
+﻿// Copyright (c) .NET Foundation. All rights reserved.
+// Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
 using System.Collections.Generic;
@@ -9,6 +10,7 @@ using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNet.SignalR.Messaging;
+using Microsoft.AspNet.SignalR.Infrastructure;
 
 namespace Microsoft.AspNet.SignalR.SqlServer
 {
@@ -50,7 +52,7 @@ namespace Microsoft.AspNet.SignalR.SqlServer
 
         public Task StartReceiving()
         {
-            var tcs = new TaskCompletionSource<object>();
+            var tcs = new DispatchingTaskCompletionSource<object>();
 
             ThreadPool.QueueUserWorkItem(Receive, tcs);
 
@@ -74,7 +76,7 @@ namespace Microsoft.AspNet.SignalR.SqlServer
          SuppressMessage("Microsoft.Design", "CA1031:DoNotCatchGeneralExceptionTypes", Justification = "On a background thread with explicit error processing")]
         private void Receive(object state)
         {
-            var tcs = (TaskCompletionSource<object>)state;
+            var tcs = (DispatchingTaskCompletionSource<object>)state;
 
             if (!_lastPayloadId.HasValue)
             {
