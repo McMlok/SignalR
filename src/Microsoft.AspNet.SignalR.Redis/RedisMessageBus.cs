@@ -170,7 +170,6 @@ namespace Microsoft.AspNet.SignalR.Redis
 
         private async void OnConnectionRestored(Exception ex)
         {
-<<<<<<< HEAD
 						if (ex != null && ex.Message == "Redis master was switched")
 						{
 							//Master is now diferent server we must resubscribe to get messages published to new server
@@ -178,7 +177,6 @@ namespace Microsoft.AspNet.SignalR.Redis
 						}
 						await _connection.RestoreLatestValueForKey(_db, _key);
             _trace.TraceInformation("Connection restored");
-=======
             // StackExchange Redis will raise this event twice when a connection is restored -
             // once for ConnectionType.Interactive and once for ConnectionType.Subscription.
             // We could try being more granular but ignoring the subsequent event should suffice.
@@ -198,7 +196,6 @@ namespace Microsoft.AspNet.SignalR.Redis
                     _trace.TraceVerbose("Duplicate ConnectionRestored event - ignoring");
                     return;
                 }
->>>>>>> b73cbabe69bc48c4cb8d768148e157712a264ce9
 
                 await _connection.RestoreLatestValueForKey(_db, _key);
 
